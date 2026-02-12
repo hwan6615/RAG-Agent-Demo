@@ -1,0 +1,42 @@
+# Python 관련 불필요한 파일
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 가상환경 (uv, venv 등)
+.venv/
+venv/
+ENV/
+
+# 환경 변수 및 비밀 키 (절대 업로드 금지)
+.env
+.flaskenv
+
+# Streamlit 관련
+.streamlit/config.toml
+.streamlit/secrets.toml
+
+# OS 관련
+.DS_Store
+Thumbs.db
+
+# 로컬 테스트 데이터
+my_dataset.json
