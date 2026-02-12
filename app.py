@@ -194,7 +194,7 @@ st.set_page_config(page_title="RAG Agent Demo", page_icon="🧠", layout="wide")
 st.title("🧠 RAG 기반 AI Agent (Tool Retrieval)")
 st.markdown("""
 이 에이전트는 정답 도구를 미리 알지 못합니다. 
-**전체 도구 라이브러리**에서 질문과 가장 관련 있는 도구를 **스스로 검색(Retrieval)**하여 사용합니다.
+**전체 도구 라이브러리**에서 질문과 가장 관련 있는 도구를 스스로 검색하여 사용합니다.
 """)
 
 # 1. 사이드바: 데이터 준비

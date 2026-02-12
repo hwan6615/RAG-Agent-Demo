@@ -16,7 +16,7 @@
 
 ## 🖼️ Dashboard Demo
 
-![Dashboard Demo](image_0b3fc0.png)
+![Dashboard Demo](demo_img.png)
 *RAG 기반 에이전트가 전체 도구 라이브러리에서 의미론적 유사도를 기반으로 도구를 추출하고 추론하는 과정입니다.*
 
 ---
