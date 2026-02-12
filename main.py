@@ -1,8 +1,10 @@
 import os
 import json
+import numpy as np
 from dotenv import load_dotenv
 from openai import OpenAI
 from datasets import load_dataset
+from sklearn.metrics.pairwise import cosine_similarity
 
 # 1. 환경 변수 로드
 load_dotenv()
@@ -123,6 +125,38 @@ def format_tools_for_openai(tools_input):
     
     return formatted_tools
 
+# [추가] RAG를 위한 검색기 클래스
+class ToolRetriever:
+    def __init__(self, client):
+        self.client = client
+        self.tool_pool = []
+        self.tool_descriptions = []
+        self.embeddings = None
+
+    def add_tools(self, tools):
+        for tool in tools:
+            if any(t['function']['name'] == tool['function']['name'] for t in self.tool_pool):
+                continue
+            self.tool_pool.append(tool)
+            desc = f"{tool['function']['name']}: {tool['function']['description']}"
+            self.tool_descriptions.append(desc)
+
+    def build_index(self):
+        if not self.tool_descriptions: return
+        print(f"🔧 {len(self.tool_descriptions)}개의 도구 임베딩 생성 중...")
+        response = self.client.embeddings.create(
+            input=self.tool_descriptions,
+            model="text-embedding-3-small"
+        )
+        self.embeddings = np.array([data.embedding for data in response.data])
+
+    def retrieve(self, query, top_k=3):
+        q_resp = self.client.embeddings.create(input=[query], model="text-embedding-3-small")
+        q_vec = np.array([q_resp.data[0].embedding])
+        similarities = cosine_similarity(q_vec, self.embeddings)[0]
+        top_indices = similarities.argsort()[-top_k:][::-1]
+        return [self.tool_pool[idx] for idx in top_indices]
+    
 # 4. 에이전트 실행
 def run_agent(question, tools):
     try:
@@ -150,57 +184,44 @@ def run_agent(question, tools):
         print(f"API Error: {e}")
         return "Error", None
 
-# 5. 메인 실행
+# 5. 메인 실행 (RAG 적용 버전)
 def main():
-    data_samples = load_salesforce_dataset(num_samples=3)
+    # 데이터 로드 (샘플을 넉넉히 가져와서 도구 풀을 만듭니다)
+    raw_samples = load_salesforce_dataset(num_samples=20)
     
-    if not data_samples:
-        print("테스트할 데이터가 없습니다.")
-        return
+    # 1. Tool Pool 구축 및 RAG 인덱싱
+    retriever = ToolRetriever(client)
+    for sample in raw_samples:
+        retriever.add_tools(format_tools_for_openai(sample['tools']))
+    retriever.build_index()
 
     correct_count = 0
-    total_count = len(data_samples)
+    # 테스트는 전체 샘플 중 일부(예: 처음 5개)만 진행
+    test_samples = raw_samples[:5] 
 
-    print("\n=== 에이전트 평가 시작 (Salesforce Dataset) ===\n")
+    print("\n=== RAG 기반 에이전트 평가 시작 ===\n")
 
-    for i, item in enumerate(data_samples):
-        question = item['query']
-        raw_tools = item['tools']
-        raw_answers = item['answers']
+    for i, item in enumerate(test_samples):
+        query = item['query']
+        expected_name = json.loads(item['answers'])[0]['name']
 
-        # 1. 도구 변환
-        tools = format_tools_for_openai(raw_tools)
+        # [핵심] Retrieval 단계: 전체 도구 중 질문과 관련된 것만 검색
+        retrieved_tools = retriever.retrieve(query, top_k=3)
         
-        # 2. 정답 파싱
-        try:
-            if isinstance(raw_answers, str):
-                answers_list = json.loads(raw_answers)
-            else:
-                answers_list = raw_answers
-            expected_name = answers_list[0]['name']
-        except:
-            expected_name = "Parsing Error"
-
-        # 3. 에이전트 실행
-        predicted_name, predicted_args = run_agent(question, tools)
+        # 2. 에이전트 실행 (검색된 도구만 전달)
+        predicted_name, _ = run_agent(query, retrieved_tools)
         
-        # 4. 결과 출력
-        print(f"[Case {i+1}]")
-        print(f"Q: {question}")
-        print(f"Expected: {expected_name}")
-        print(f"Predicted: {predicted_name}")
+        print(f"[Case {i+1}] Q: {query[:50]}...")
+        print(f"Expected: {expected_name} | Predicted: {predicted_name}")
         
         if predicted_name == expected_name:
             print("Result: ✅ Success")
             correct_count += 1
         else:
             print("Result: ❌ Fail")
-            if predicted_args:
-                 print(f"   Args: {predicted_args}")
-
         print("-" * 30)
 
-    print(f"\n최종 결과: {correct_count}/{total_count} 성공 ({correct_count/total_count*100:.1f}%)")
+    print(f"\n최종 결과: {correct_count}/{len(test_samples)} 성공")
 
 if __name__ == "__main__":
     main()
