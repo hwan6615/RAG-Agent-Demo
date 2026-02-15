@@ -22,8 +22,11 @@
 ---
 
 ## 🖼️ Dashboard Demo
+| | | |
+| :---: | :---: | :---: |
+| ![1](./result%20imgs/demo1.png) | ![2](./result%20imgs/demo2.png) |
+| ![3](./result%20imgs/demo3.png) | ![4](./result%20imgs/demo4.png) |
 
-![Dashboard Demo](demo_img.png)
 *Streamlit 대시보드를 통해 에이전트의 사고 과정(Chain of Thought), 도구 검색 결과, 그리고 실행 결과를 실시간으로 시각화합니다.*
 
 ---
