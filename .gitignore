@@ -1,10 +1,11 @@
-# Python 관련 불필요한 파일
+# ------------------------------------------------
+# Python / Build
+# ------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -20,23 +21,50 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# 가상환경 (uv, venv 등)
+# ------------------------------------------------
+# Virtual Environments (가상환경)
+# ------------------------------------------------
+# uv creates .venv by default, keeping compat with standard tools
 .venv/
 venv/
 ENV/
+env/
 
-# 환경 변수 및 비밀 키 (절대 업로드 금지)
+# ------------------------------------------------
+# Environment Variables & Secrets (절대 업로드 금지)
+# ------------------------------------------------
 .env
 .flaskenv
 
-# Streamlit 관련
-.streamlit/config.toml
+# ------------------------------------------------
+# Streamlit & Web Frameworks
+# ------------------------------------------------
 .streamlit/secrets.toml
+# config.toml은 테마 설정 등이 있다면 올려도 되지만, 로컬 전용 설정이면 무시
+# .streamlit/config.toml 
 
-# OS 관련
+# ------------------------------------------------
+# OS / IDE Settings (편집기 설정 파일)
+# ------------------------------------------------
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
+*.swp
 
-# 로컬 테스트 데이터
+# ------------------------------------------------
+# Project Specific (데이터 및 임시 파일)
+# ------------------------------------------------
+# 로컬 테스트용 더미 데이터 (필요 시 추가)
 my_dataset.json
+
+# [중요] 임베딩 캐시 파일 (혹시 나중에 numpy로 저장할 경우 대비)
+*.npy
+*.pkl
+
+# 주의: selected_tools.json은 데모 실행을 위해 
+# 깃허브에 '올리는 것'을 추천합니다. (크기가 크지 않다면)
+# 만약 용량이 너무 크다면 아래 주석을 해제하세요.
+# selected_tools.json

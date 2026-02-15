@@ -1,227 +1,355 @@
-import os
+# main.py
+
 import json
 import numpy as np
-from dotenv import load_dotenv
+import pandas as pd
 from openai import OpenAI
-from datasets import load_dataset
 from sklearn.metrics.pairwise import cosine_similarity
+from rank_bm25 import BM25Okapi
+import ast
+from datasets import load_dataset
+from dotenv import load_dotenv
+from tavily import TavilyClient
+import os
 
-# 1. 환경 변수 로드
+# .env 파일 로드
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-hf_token = os.getenv("HF_TOKEN")
 
-# 2. 데이터셋 로드
-def load_salesforce_dataset(num_samples=3):
-    dataset_name = "Salesforce/xlam-function-calling-60k"
-    print(f"Dataset 로딩 시도 중: {dataset_name}...")
-    try:
-        dataset = load_dataset(dataset_name, split="train", streaming=True, token=hf_token)
-        return list(dataset.take(num_samples))
-    except Exception as e:
-        print(f"\n[Error] 데이터셋 로드 실패: {e}")
-        return []
+# 1. 데이터 로드 (Salesforce xLAM 데이터셋 연동)
+# ---------------------------------------------------------
+# main.py
 
-# ==========================================
-# [핵심] 강력한 파라미터 청소 (Strict Mode)
-# ==========================================
-def sanitize_parameters(params):
-    """
-    OpenAI API 400 에러를 방지하기 위해, 
-    오직 허용된 필드(type, description)만 남기고 
-    나머지(default, optional 등)는 제거하며 타입을 표준화합니다.
-    """
-    # 1. 파라미터가 없거나 None인 경우
-    if not params or str(params).lower() == "none":
-        return {"type": "object", "properties": {}}
-
-    # 2. 문자열로 들어온 경우 JSON 파싱
-    if isinstance(params, str):
-        try:
-            params = json.loads(params.replace("'", '"'))
-        except:
-            return {"type": "object", "properties": {}}
-
-    # 3. 기본 구조 생성
-    sanitized_params = {
-        "type": "object",
-        "properties": {},
-        "required": params.get("required", [])
-    }
-
-    # 4. 속성별 청소 (Deep Cleaning)
-    raw_props = params.get("properties", {})
-    if not isinstance(raw_props, dict):
-        raw_props = {}
-
-    for prop_name, prop_info in raw_props.items():
-        if not isinstance(prop_info, dict):
-            continue
-            
-        # 새 딕셔너리 생성 (기존 더러운 필드들을 버리기 위함)
-        clean_prop = {}
-        
-        # (1) Description 복사
-        clean_prop["description"] = str(prop_info.get("description", ""))
-        
-        # (2) Type 매핑 (여기가 핵심)
-        # 'str, optional', 'int', 'List[str]' 같은 것들을 표준으로 변환
-        raw_type = str(prop_info.get("type", "string")).lower()
-        
-        if "int" in raw_type:
-            clean_type = "integer"
-        elif "float" in raw_type or "number" in raw_type:
-            clean_type = "number"
-        elif "bool" in raw_type:
-            clean_type = "boolean"
-        elif "list" in raw_type or "array" in raw_type:
-            clean_type = "array"
-            # array인 경우 items 정의가 필요할 수 있으나, 복잡성 방지를 위해 생략하거나 string 처리
-        else:
-            clean_type = "string" # 'str, optional' 등은 여기서 string으로 통일됨
-
-        clean_prop["type"] = clean_type
-        
-        # (3) Enum 처리 (값이 명확한 경우만 유지)
-        if "enum" in prop_info and isinstance(prop_info["enum"], list):
-            # enum 값들이 모두 문자열인지 확인 (OpenAI 제약)
-            clean_prop["enum"] = [str(e) for e in prop_info["enum"]]
-
-        # (4) sanitizing 완료된 속성 추가
-        sanitized_params["properties"][prop_name] = clean_prop
-
-    return sanitized_params
-
-# 3. 도구 포맷 변환
-def format_tools_for_openai(tools_input):
-    formatted_tools = []
+def load_data():
+    tools = []
     
-    if isinstance(tools_input, str):
+    # ---------------------------------------------------------
+    # 1. 기본 데이터 로드 (JSON 파일 또는 HuggingFace)
+    # ---------------------------------------------------------
+    try:
+        # 먼저 로컬에 샘플링해둔 파일이 있는지 확인
+        with open("selected_tools.json", "r", encoding="utf-8") as f:
+            tools = json.load(f)
+            print(f"📂 로컬 데이터셋(selected_tools.json) 로드 완료: {len(tools)}개")
+    except FileNotFoundError:
+        print("⚠️ 로컬 파일이 없어 HuggingFace에서 스트리밍으로 로드합니다 (100개 제한).")
         try:
-            tools_list = json.loads(tools_input)
-        except:
-            return []
-    elif isinstance(tools_input, list):
-        tools_list = tools_input
-    else:
-        return []
+            # 로컬 파일 없으면 HuggingFace에서 실시간 로드 (기존 로직)
+            dataset = load_dataset("Salesforce/xlam-function-calling-60k", split="train", streaming=True)
+            for i, item in enumerate(dataset):
+                if i >= 100: break
+                if 'tools' in item:
+                    try:
+                        tool_list = item['tools'] if isinstance(item['tools'], list) else json.loads(item['tools'])
+                        tools.extend(tool_list)
+                    except:
+                        continue
+        except Exception as e:
+            print(f"⚠️ 데이터셋 로드 실패: {e}")
 
-    for func in tools_list:
-        if not func: continue
-        
-        raw_params = func.get("parameters", {})
-        # 여기서 강력해진 청소 함수 호출
-        clean_params = sanitize_parameters(raw_params)
-
-        tool = {
-            "type": "function",
-            "function": {
-                "name": func.get("name"),
-                "description": func.get("description", ""),
-                "parameters": clean_params
+    # ---------------------------------------------------------
+    # 2. [핵심] 커스텀 도구(Tavily 등) 강제 주입 (Injection)
+    # ---------------------------------------------------------
+    # 이 부분이 빠져 있어서 검색이 안 되었던 것입니다!
+    custom_tools = [
+        {
+            "name": "search_web",
+            "description": (
+                "A powerful internet search engine. "
+                "Use this for 'latest news', 'current events', 'AI trends'. "
+                "한국어 질문: '웹 검색', '최신 뉴스', '트렌드', '정보 검색'이 필요할 때 반드시 이 도구를 사용하세요."  # <--- 한국어 키워드 추가!
+            ),
+            "parameters": {
+                "type": "object", 
+                "properties": {"query": {"type": "string", "description": "The search query."}},
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "get_weather",
+            "description": "Get the current weather for a specific location.",
+            "parameters": {
+                "type": "object", 
+                "properties": {"city": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"}},
+                "required": ["city"]
+            }
+        },
+        {
+            "name": "get_stock_price",
+            "description": "Get the current stock price for a given ticker symbol.",
+            "parameters": {
+                "type": "object", 
+                "properties": {"ticker": {"type": "string", "description": "The stock ticker symbol, e.g. AAPL"}},
+                "required": ["ticker"]
             }
         }
-        formatted_tools.append(tool)
-    
-    return formatted_tools
+    ]
 
-# [추가] RAG를 위한 검색기 클래스
-class ToolRetriever:
-    def __init__(self, client):
+    print(f"💉 커스텀 도구 {len(custom_tools)}개를 도구 풀에 주입합니다.")
+    tools.extend(custom_tools)
+    
+    # 중복 제거 (혹시 모를 중복 방지)
+    unique_tools = {t['name']: t for t in tools if 'name' in t}
+    final_tools = list(unique_tools.values())
+    
+    print(f"✅ 최종 도구 풀 크기: {len(final_tools)}개")
+    
+    # [검증] search_web이 진짜 들어갔는지 확인
+    if any(t['name'] == 'search_web' for t in final_tools):
+        print("🔍 확인: 'search_web' 도구가 성공적으로 포함되었습니다.")
+    else:
+        print("🚨 경고: 'search_web' 도구가 포함되지 않았습니다!")
+
+    return final_tools
+
+# ---------------------------------------------------------
+# 2. Hybrid Retriever & Reranking (검색 고도화)
+# ---------------------------------------------------------
+class HybridRetriever:
+    def __init__(self, tools, embeddings, client):
+        self.tools = tools
+        self.embeddings = embeddings  # 미리 임베딩된 도구 설명 벡터들
         self.client = client
-        self.tool_pool = []
-        self.tool_descriptions = []
-        self.embeddings = None
+        
+        # BM25 인덱싱 (키워드 검색용)
+        tokenized_corpus = [tool['description'].lower().split() for tool in tools]
+        self.bm25 = BM25Okapi(tokenized_corpus)
 
-    def add_tools(self, tools):
-        for tool in tools:
-            if any(t['function']['name'] == tool['function']['name'] for t in self.tool_pool):
-                continue
-            self.tool_pool.append(tool)
-            desc = f"{tool['function']['name']}: {tool['function']['description']}"
-            self.tool_descriptions.append(desc)
+    def search(self, query, query_embedding, top_k=20):
+        """
+        BM25(키워드)와 Vector(의미) 검색을 결합한 Hybrid Search
+        """
+        # 1. Vector Search
+        similarities = cosine_similarity([query_embedding], self.embeddings)[0]
+        # 점수 정규화 (0~1)
+        # (간단한 예시: min-max normalization 로직 추가 가능)
+        
+        # 2. Keyword Search (BM25)
+        tokenized_query = query.lower().split()
+        bm25_scores = self.bm25.get_scores(tokenized_query)
+        # 점수 정규화 필요 (BM25는 점수 범위가 큼, 여기서는 단순 합산 예시)
+        bm25_scores = (bm25_scores - np.min(bm25_scores)) / (np.max(bm25_scores) - np.min(bm25_scores) + 1e-9)
 
-    def build_index(self):
-        if not self.tool_descriptions: return
-        print(f"🔧 {len(self.tool_descriptions)}개의 도구 임베딩 생성 중...")
+        # 3. Hybrid Score (가중치 조절 가능: Vector 0.7 + BM25 0.3)
+        hybrid_scores = 0.7 * similarities + 0.3 * bm25_scores
+        
+        # Top-K 추출
+        top_indices = np.argsort(hybrid_scores)[::-1][:top_k]
+        candidates = [self.tools[i] for i in top_indices]
+        
+        return self.rerank(query, candidates)
+
+    def rerank(self, query, candidates):
+        """
+        GPT-4o-mini를 리랭커(Reranker)로 사용하여 후보군 압축
+        """
+        candidate_str = "\n".join([f"{i}. {t['name']}: {t['description']}" for i, t in enumerate(candidates)])
+        
+        prompt = f"""
+        User Query: "{query}"
+        
+        Below is a list of potential tools. Select the top 3 tools that are most relevant to solving the user's query.
+        Return ONLY the indices of the tools (e.g., [0, 2, 5]).
+        
+        Tools:
+        {candidate_str}
+        """
+        
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0
+            )
+            indices = json.loads(response.choices[0].message.content)
+            final_tools = [candidates[i] for i in indices if i < len(candidates)]
+            return final_tools if final_tools else candidates[:5]
+        except:
+            return candidates[:3] # 에러 시 상위 3개 반환
+
+# ---------------------------------------------------------
+# 3. Agent Class (Planning + Self-Correction)
+# ---------------------------------------------------------
+class Agent:
+    def __init__(self, client, retriever):
+        self.client = client
+        self.retriever = retriever
+        self.max_retries = 2
+        self.history = [] # 대화 및 생각의 흐름 저장
+
+    def get_embedding(self, text):
         response = self.client.embeddings.create(
-            input=self.tool_descriptions,
-            model="text-embedding-3-small"
+            input=text, model="text-embedding-3-small"
         )
-        self.embeddings = np.array([data.embedding for data in response.data])
+        return response.data[0].embedding
 
-    def retrieve(self, query, top_k=3):
-        q_resp = self.client.embeddings.create(input=[query], model="text-embedding-3-small")
-        q_vec = np.array([q_resp.data[0].embedding])
-        similarities = cosine_similarity(q_vec, self.embeddings)[0]
-        top_indices = similarities.argsort()[-top_k:][::-1]
-        return [self.tool_pool[idx] for idx in top_indices]
-    
-# 4. 에이전트 실행
-def run_agent(question, tools):
-    try:
-        if not tools: return "No Tools", None
-
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant. Use the supplied tools to answer the user's question."},
-                {"role": "user", "content": question}
-            ],
-            tools=tools,
-            tool_choice="auto"
-        )
-        
-        message = response.choices[0].message
-        
-        if message.tool_calls:
-            return message.tool_calls[0].function.name, message.tool_calls[0].function.arguments
-        else:
-            return "No Tool Call", None
+    # [수정 3] 안전한 JSON 파싱 헬퍼 함수
+    def parse_json_safely(self, text):
+        try:
+            # 1. 마크다운 코드 블록 제거 (```json ... ```)
+            cleaned_text = text.strip()
+            if "```" in cleaned_text:
+                cleaned_text = cleaned_text.split("```")[1]
+                if cleaned_text.startswith("json"):
+                    cleaned_text = cleaned_text[4:]
             
-    except Exception as e:
-        # 에러 메시지를 좀 더 명확히 출력
-        print(f"API Error: {e}")
-        return "Error", None
-
-# 5. 메인 실행 (RAG 적용 버전)
-def main():
-    # 데이터 로드 (샘플을 넉넉히 가져와서 도구 풀을 만듭니다)
-    raw_samples = load_salesforce_dataset(num_samples=20)
-    
-    # 1. Tool Pool 구축 및 RAG 인덱싱
-    retriever = ToolRetriever(client)
-    for sample in raw_samples:
-        retriever.add_tools(format_tools_for_openai(sample['tools']))
-    retriever.build_index()
-
-    correct_count = 0
-    # 테스트는 전체 샘플 중 일부(예: 처음 5개)만 진행
-    test_samples = raw_samples[:5] 
-
-    print("\n=== RAG 기반 에이전트 평가 시작 ===\n")
-
-    for i, item in enumerate(test_samples):
-        query = item['query']
-        expected_name = json.loads(item['answers'])[0]['name']
-
-        # [핵심] Retrieval 단계: 전체 도구 중 질문과 관련된 것만 검색
-        retrieved_tools = retriever.retrieve(query, top_k=3)
+            # 2. JSON 파싱
+            return json.loads(cleaned_text.strip())
+        except:
+            # JSON이 아니면 (일반 텍스트 답변이면) None 반환
+            return None
         
-        # 2. 에이전트 실행 (검색된 도구만 전달)
-        predicted_name, _ = run_agent(query, retrieved_tools)
+    def run(self, user_query, status_container=None): # status_container 추가
+        self.history = [{"role": "user", "content": user_query}]
+        logs = [] 
+
+        # 1. 초기 도구 검색
+        query_embedding = self.get_embedding(user_query)
+        relevant_tools = self.retriever.search(user_query, query_embedding)
+        logs.append({"step": "Retrieval", "content": relevant_tools})
         
-        print(f"[Case {i+1}] Q: {query[:50]}...")
-        print(f"Expected: {expected_name} | Predicted: {predicted_name}")
+        # 시스템 프롬프트 강화: 도구 사용 시와 최종 답변 시를 명확히 구분
+        system_prompt = f"""
+        You are an intelligent agent.
+        You have access to the following tools:
+        {json.dumps(relevant_tools, indent=2)}
+
+        [INSTRUCTIONS]
+        1. To use a tool, you MUST output a JSON block like this:
+        ```json
+        {{
+            "tool_name": "tool_name_here",
+            "arguments": {{ "arg_name": "value" }}
+        }}
+        ```
+        2. If you have the final answer or if no tool is relevant, just write the answer in plain text.
+        3. Do NOT include any explanations outside the JSON when calling a tool.
+        """
         
-        if predicted_name == expected_name:
-            print("Result: ✅ Success")
-            correct_count += 1
+        # history의 첫 번째에 시스템 프롬프트가 오도록 설정 (매번 갱신)
+        messages = [{"role": "system", "content": system_prompt}] + self.history
+
+        # 2. Planning & Execution Loop
+        max_steps = 5
+        for step in range(max_steps):
+            
+            # UI에 진행상황 업데이트 (사용자가 멈췄다고 느끼지 않게)
+            if status_container:
+                status_container.markdown(f"🔄 **Step {step+1}/{max_steps}**: 생각하고 추론하는 중...")
+
+            # [수정 1] response_format 제거 -> 텍스트와 JSON 자유롭게 사용
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=0 
+            )
+            content = response.choices[0].message.content
+            
+            # [수정 2] 마크다운 백틱 제거 및 JSON 파싱 시도
+            action = self.parse_json_safely(content)
+
+            # A. 도구 호출인 경우 (JSON 파싱 성공 및 tool_name 존재)
+            if action and "tool_name" in action:
+                tool_name = action["tool_name"]
+                args = action.get("arguments", {})
+                
+                logs.append({"step": "Plan", "content": f"Decided to call {tool_name} with {args}"})
+                
+                # Mock Execution
+                result, is_error = self.mock_execute(tool_name, args)
+                
+                logs.append({"step": "Execution", "content": f"Result: {result}"})
+                
+                # 대화 기록에 추가 (LLM이 결과를 알아야 함)
+                self.history.append({"role": "assistant", "content": content})
+                self.history.append({"role": "user", "content": f"Tool output: {result}"})
+                messages = [{"role": "system", "content": system_prompt}] + self.history
+
+            # B. 최종 답변인 경우 (JSON이 아니거나 tool_name이 없음)
+            else:
+                logs.append({"step": "Final Answer", "content": content})
+                self.history.append({"role": "assistant", "content": content})
+                return content, logs
+                
+        return "죄송합니다. 너무 많은 단계가 소요되어 답변을 중단했습니다.", logs
+
+    # Agent 클래스 내부
+    def mock_execute(self, tool_name, args):
+        """
+        [Hybrid Execution]
+        1. 검색 도구 -> Tavily API 실시간 호출 (Real)
+        2. 날씨/주식 -> 데모용 가짜 데이터 (Mock)
+        3. 그 외 -> 실행 성공 로그만 반환 (Simulation)
+        """
+        
+        # ---------------------------------------------------------
+        # Case 1: [Real] 웹 검색 (Tavily 연동)
+        # ---------------------------------------------------------
+        # xLAM이 'search_web', 'google_search', 'bing_search' 등 뭘 가져오든
+        # 이름에 'search', 'web', 'news'가 있으면 Tavily로 처리합니다.
+        if any(k in tool_name.lower() for k in ["search", "web", "news"]):
+            try:
+                # 1. API 키 로드
+                tavily_key = os.getenv("TAVILY_API_KEY")
+                if not tavily_key:
+                    return "Error: TAVILY_API_KEY not found in .env", True
+
+                # 2. 클라이언트 초기화
+                tavily = TavilyClient(api_key=tavily_key)
+                
+                # 3. 검색 쿼리 추출 (xLAM 도구마다 파라미터 이름이 다를 수 있음)
+                query = args.get("query") or args.get("q") or args.get("search_term")
+                if not query:
+                    return "Error: No query provided in arguments", True
+
+                # 4. 실제 검색 실행 (요약본만 가져오기)
+                print(f"🌍 Tavily 검색 실행: {query}")
+                search_result = tavily.search(query=query, search_depth="basic", max_results=3)
+                
+                # 5. 결과 반환 (LLM이 읽을 수 있게 JSON 문자열로 변환)
+                # context 리스트만 뽑아서 줍니다.
+                results = search_result.get("results", [])
+                return json.dumps(results, ensure_ascii=False), False
+
+            except Exception as e:
+                return f"Error during Tavily search: {str(e)}", True
+
+        # ---------------------------------------------------------
+        # Case 2: [Mock] 날씨 (데모용)
+        # ---------------------------------------------------------
+        elif "weather" in tool_name.lower():
+            city = args.get("city", "Unknown City")
+            return json.dumps({
+                "city": city,
+                "temperature": "22°C", 
+                "condition": "Partly Cloudy", 
+                "humidity": "45%",
+                "note": "This is mock data."
+            }), False
+            
+        # ---------------------------------------------------------
+        # Case 3: [Mock] 주식 (데모용)
+        # ---------------------------------------------------------
+        elif "stock" in tool_name.lower():
+            ticker = args.get("ticker", "UNKNOWN")
+            return json.dumps({
+                "ticker": ticker,
+                "price": "$150.25", 
+                "change": "+1.25%",
+                "status": "Market Open",
+                "note": "This is mock data."
+            }), False
+
+        # ---------------------------------------------------------
+        # Case 4: [Generic] 그 외 모든 도구
+        # ---------------------------------------------------------
         else:
-            print("Result: ❌ Fail")
-        print("-" * 30)
+            return f"✅ [Simulation] Tool '{tool_name}' executed successfully. (No real action performed)", False
 
-    print(f"\n최종 결과: {correct_count}/{len(test_samples)} 성공")
-
-if __name__ == "__main__":
-    main()
+# ---------------------------------------------------------
+# 초기화 헬퍼 함수
+# ---------------------------------------------------------
+def initialize_system(api_key, tools_data, tool_embeddings):
+    client = OpenAI(api_key=api_key)
+    retriever = HybridRetriever(tools_data, tool_embeddings, client)
+    agent = Agent(client, retriever)
+    return agent
