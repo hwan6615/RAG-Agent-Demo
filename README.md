@@ -5,7 +5,7 @@
 
 이 프로젝트는 대규모 도구 데이터셋(Salesforce xLAM)을 기반으로, 사용자의 질문을 분석하여 스스로 계획(Plan)하고, 도구를 검색(Retrieve) 및 실행(Execute)하며, 오류 발생 시 스스로 수정(Self-Correction)하는 자율형 AI 에이전트입니다.
 
-단순한 RAG(검색 증강 생성)를 넘어, **Hybrid Retrieval(BM25 + Vector)**과 Real-time API 연동을 결합하여 실용성과 정확도를 극대화했습니다.
+단순한 RAG(검색 증강 생성)를 넘어, Hybrid Retrieval(BM25 + Vector)과 Real-time API 연동을 결합하여 실용성과 정확도를 극대화했습니다.
 
 ---
 
@@ -30,20 +30,20 @@
 
 ## ⚡ 주요 핵심 기능
 1. Hybrid Retrieval Engine (BM25 + Vector)
- - 문제: "AI 트렌드" 같은 고유명사나 특정 키워드가 포함된 질문에서 Vector Search만으로는 정확한 도구를 찾기 어려운 한계(Retrieval Miss) 발생.
- - 해결: 키워드 매칭에 강한 BM25 알고리즘과 의미 파악에 강한 OpenAI Embedding을 결합하여 검색 정확도를 비약적으로 향상시켰습니다.
- - SEO 최적화: 도구 설명(Description)에 한국어/영어 키워드를 전략적으로 배치하여 검색 순위(Ranking)를 튜닝했습니다.
+   - 문제: "AI 트렌드" 같은 고유명사나 특정 키워드가 포함된 질문에서 Vector Search만으로는 정확한 도구를 찾기 어려운 한계(Retrieval Miss) 발생.
+   - 해결: 키워드 매칭에 강한 BM25 알고리즘과 의미 파악에 강한 OpenAI Embedding을 결합하여 검색 정확도를 비약적으로 향상시켰습니다.
+   - SEO 최적화: 도구 설명(Description)에 한국어/영어 키워드를 전략적으로 배치하여 검색 순위(Ranking)를 튜닝했습니다.
 
 2. Self-Correction Loop (자가 수정)
- - 기능: 에이전트가 도구를 실행하다가 에러(예: 필수 인자 누락, API 호출 실패)가 발생하면, 에러 메시지를 읽고 스스로 파라미터를 수정하여 재시도합니다.
- - 효과: 일회성 답변 실패를 방지하고, 복잡한 사용자 요청에도 강건한(Robust) 대응이 가능합니다.
+   - 기능: 에이전트가 도구를 실행하다가 에러(예: 필수 인자 누락, API 호출 실패)가 발생하면, 에러 메시지를 읽고 스스로 파라미터를 수정하여 재시도합니다.
+   - 효과: 일회성 답변 실패를 방지하고, 복잡한 사용자 요청에도 강건한(Robust) 대응이 가능합니다.
 
 3. Real-world & Mock Hybrid Execution
- - Real-time Search: Tavily API를 연동하여 '웹 검색', '최신 뉴스' 관련 요청 시 실제 인터넷 정보를 가져와 답변합니다.
- - Smart Simulation: 날씨, 주식 등 API 접근이 제한된 도구는 Rich Mock Data를 반환하여 실제와 유사한 사용자 경험을 제공하며, 그 외 수만 개의 도구는 Generic Mock으로 처리하여 확장성을 확보했습니다.
+   - Real-time Search: Tavily API를 연동하여 '웹 검색', '최신 뉴스' 관련 요청 시 실제 인터넷 정보를 가져와 답변합니다.
+   - Smart Simulation: 날씨, 주식 등 API 접근이 제한된 도구는 Rich Mock Data를 반환하여 실제와 유사한 사용자 경험을 제공하며, 그 외 수만 개의 도구는 Generic Mock으로 처리하여 확장성을 확보했습니다.
 
 4. Transparent Reasoning (XAI)
- - Streamlit UI: 에이전트의 내부 사고 과정인 Retrieval → Plan → Execution → Final Answer의 전 과정을 투명하게 시각화하여 디버깅 및 사용자 신뢰도를 높였습니다.
+   - Streamlit UI: 에이전트의 내부 사고 과정인 Retrieval → Plan → Execution → Final Answer의 전 과정을 투명하게 시각화하여 디버깅 및 사용자 신뢰도를 높였습니다.
 
 ---
 
@@ -59,22 +59,22 @@
 
 ## 🧠 시스템 아키텍처
 1. **Tool Indexing**
- - Salesforce xLAM 데이터셋 로드 + 커스텀 도구(Tavily 등) 주입(Injection).
- - BM25 인덱스 생성 및 OpenAI Vector Embedding 생성.
+   - Salesforce xLAM 데이터셋 로드 + 커스텀 도구(Tavily 등) 주입(Injection).
+   - BM25 인덱스 생성 및 OpenAI Vector Embedding 생성.
 
 2. **Hybrid Retrieval**
- - 사용자의 질문(Query)이 들어오면 키워드 점수와 벡터 유사도 점수를 가중 합산하여 상위 K개 도구 추출.
+   - 사용자의 질문(Query)이 들어오면 키워드 점수와 벡터 유사도 점수를 가중 합산하여 상위 K개 도구 추출.
 
 3. **Agent Planning**
- - LLM이 검색된 도구들을 분석하여 실행 계획 수립.
+   - LLM이 검색된 도구들을 분석하여 실행 계획 수립.
 
 4. **Tool Execution (Router)**
- - Search Tools: Tavily API를 통해 실제 웹 데이터 수집.
- - Demo Tools: 사전에 정의된 정교한 Mock 데이터 반환.
- - General Tools: 실행 성공 여부만 시뮬레이션.
+   - Search Tools: Tavily API를 통해 실제 웹 데이터 수집.
+   - Demo Tools: 사전에 정의된 정교한 Mock 데이터 반환.
+   - General Tools: 실행 성공 여부만 시뮬레이션.
 
 5. **Self-Correction**
- - 실행 결과가 실패일 경우, 에이전트가 스스로 판단하여 인자 수정 후 재실행 루프 진입.
+   - 실행 결과가 실패일 경우, 에이전트가 스스로 판단하여 인자 수정 후 재실행 루프 진입.
 
 ---
 
@@ -93,16 +93,16 @@
 
 ### 📌 주요 파일 설명
 1. main.py
- - Agent 클래스: 계획(Plan) → 실행(Execute) → 수정(Correction) 루프를 제어합니다.
- - Retriever: BM25와 Vector Search를 결합한 하이브리드 검색 로직이 구현되어 있습니다.
- - mock_execute: 실제 API(Tavily)와 시뮬레이션(Mock)을 분기하는 라우팅 로직을 담당합니다.
+   - Agent 클래스: 계획(Plan) → 실행(Execute) → 수정(Correction) 루프를 제어합니다.
+   - Retriever: BM25와 Vector Search를 결합한 하이브리드 검색 로직이 구현되어 있습니다.
+   - mock_execute: 실제 API(Tavily)와 시뮬레이션(Mock)을 분기하는 라우팅 로직을 담당합니다.
 
 2. app.py: 사용자와 상호작용하는 프론트엔드입니다.
- - Streamlit을 활용하여 에이전트의 사고 과정(Chain of Thought)을 JSON 트리와 아코디언 UI로 시각화합니다.
- - OpenAI Embedding을 실시간으로 생성하여 메모리에 적재하는 초기화 로직이 포함되어 있습니다.
+   - Streamlit을 활용하여 에이전트의 사고 과정(Chain of Thought)을 JSON 트리와 아코디언 UI로 시각화합니다.
+   - OpenAI Embedding을 실시간으로 생성하여 메모리에 적재하는 초기화 로직이 포함되어 있습니다.
 
 3. tool_sampler.py: 데이터 엔지니어링 유틸리티입니다.
- - 방대한 HuggingFace 데이터셋(60k)을 매번 다운로드하는 비효율을 막기 위해, 핵심 도구들을 샘플링하여 selected_tools.json으로 추출합니다.
+   - 방대한 HuggingFace 데이터셋(60k)을 매번 다운로드하는 비효율을 막기 위해, 핵심 도구들을 샘플링하여 selected_tools.json으로 추출합니다.
 
 ---
 
@@ -150,6 +150,6 @@ uv run streamlit run app.py
 ---
 
 ## 💡 Engineering Insights
- - Data-Driven Retrieval: 단순한 도구 설명뿐만 아니라 한국어/영어 키워드를 혼합한 SEO(Search Engine Optimization) 기법을 적용하여 검색 정확도를 30% 이상 개선했습니다.
- - Hybrid Mocking Strategy: 모든 API를 연결할 수 없는 현실적인 제약을 극복하기 위해, **'Core Features(Real)'**와 **'Long-tail Features(Mock)'**를 이원화하여 시스템의 완성도와 확장성을 동시에 잡았습니다.
- - Cost Efficiency: gpt-4o-mini와 가벼운 BM25 알고리즘을 활용하여 최소한의 비용으로 고성능 에이전트 시스템을 구축했습니다.
+   - Data-Driven Retrieval: 단순한 도구 설명뿐만 아니라 한국어/영어 키워드를 혼합한 SEO(Search Engine Optimization) 기법을 적용하여 검색 정확도를 30% 이상 개선했습니다.
+   - Hybrid Mocking Strategy: 모든 API를 연결할 수 없는 현실적인 제약을 극복하기 위해, Core Features(Real)와 Long-tail Features(Mock)를 이원화하여 시스템의 완성도와 확장성을 동시에 잡았습니다.
+   - Cost Efficiency: gpt-4o-mini와 가벼운 BM25 알고리즘을 활용하여 최소한의 비용으로 고성능 에이전트 시스템을 구축했습니다.
